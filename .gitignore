@@ -1,0 +1,5 @@
+temp_chunks/
+*.mp3
+*.mp4
+.env
+__pycache__/

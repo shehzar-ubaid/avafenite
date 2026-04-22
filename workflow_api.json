@@ -1,0 +1,15 @@
+# 1. Git ko initialize karein
+git init
+
+# 2. Saari files ko "Stage" karein (Add karein)
+git add .
+
+# 3. Pehla commit banayen
+git commit -m "Initial Commit: AI Video Agent Pipeline"
+
+# 4. Apni Repository ko connect karein 
+# (Note: Username aur Password ki jagah 'Personal Access Token' use karna behtar hai)
+git remote add origin https://shehzar-ubaid@github.com/shehzar-ubaid/YOUR_REPO_NAME.git
+
+# 5. Files ko upload (Push) kar dein
+git push -u origin main
