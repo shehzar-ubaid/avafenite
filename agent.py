@@ -1,120 +1,135 @@
-import requests
 import os
-import subprocess
-from pydub import AudioSegment
 import json
+import requests
+import subprocess
+import time
+from pydub import AudioSegment
 
-class AIVideoAgent:
-    def __init__(self, comfyui_url, voice_endpoint):
-        self.comfy_url = comfyui_url
-        self.voice_api = voice_endpoint
-        self.workflow_path = "workflow_api.json"
+class AI_Video_Automator:
+    def __init__(self, comfy_url, workflow_json):
+        self.comfy_url = comfy_url
+        self.workflow_path = workflow_json
+        self.temp_dir = "temp_processing"
+        self.clips_dir = "generated_clips"
+        
+        # Create folders
+        for folder in [self.temp_dir, self.clips_dir]:
+            if not os.path.exists(folder):
+                os.makedirs(folder)
 
-    # STEP 1: Voice Cloning
-    def clone_voice(self, text, reference_voice_path):
-        print("--- Stage 1: Cloning Voice ---")
-        files = {'file': open(reference_voice_path, 'rb')}
-        data = {'text': text}
-        # Aapka specific endpoint
-        response = requests.post(self.voice_api, data=data, files=files)
-        if response.status_code == 200:
-            audio_path = "target_voice.mp3"
-            with open(audio_path, "wb") as f:
-                f.write(response.content)
-            return audio_path
-        else:
-            raise Exception("Voice Cloning Failed!")
+    def run_pipeline(self, user_input):
+        """
+        Main Function: User se data leta hai aur final video return karta hai.
+        user_input structure:
+        {
+            "audio_file": "path/to/audio.mp3",
+            "avatar_image": "path/to/avatar.png",
+            "requirements": {
+                "subtitles": True,
+                "subtitle_style": "yellow_bold", # Logic in FFmpeg
+                "quality": "4K" # 720p, 1080p, 4K, 8K
+            }
+        }
+        """
+        print("🚀 Pipeline Started...")
 
-    # STEP 2: Audio Segmentation
-    def segment_audio(self, audio_path, chunk_len_sec=10):
-        print("--- Stage 2: Segmenting Audio ---")
+        # 1. Audio Segmentation (Chunking)
+        audio_chunks = self._split_audio(user_input['audio_file'])
+
+        # 2. Load Workflow Template
+        with open(self.workflow_path, 'r') as f:
+            workflow = json.load(f)
+
+        # 3. Loop: Generate Clips via ComfyUI
+        generated_clips = []
+        for i, chunk in enumerate(audio_chunks):
+            print(f"🎬 Generating Clip {i+1}/{len(audio_chunks)}...")
+            clip_path = self._generate_single_clip(workflow, chunk, user_input['avatar_image'], i)
+            if clip_path:
+                generated_clips.append(clip_path)
+
+        # 4. Stitching (Joining all clips)
+        base_video = "base_joined_video.mp4"
+        self._stitch_clips(generated_clips, base_video)
+
+        # 5. Post-Processing (Subtitles & Upscaling)
+        final_output = "final_output_ready.mp4"
+        self._apply_final_touch(base_video, user_input['requirements'], final_output)
+
+        print(f"✅ SUCCESS! Final Video Ready: {final_output}")
+        return final_output
+
+    def _split_audio(self, audio_path):
+        print("✂️ Splitting Audio into 10s chunks...")
         audio = AudioSegment.from_file(audio_path)
         chunks = []
-        for i, start_ms in enumerate(range(0, len(audio), chunk_len_sec * 1000)):
-            chunk = audio[start_ms:start_ms + (chunk_len_sec * 1000)]
-            path = f"chunks/chunk_{i}.mp3"
+        for i, start_ms in enumerate(range(0, len(audio), 10000)):
+            chunk = audio[start_ms:start_ms + 10000]
+            path = f"{self.temp_dir}/chunk_{i}.mp3"
             chunk.export(path, format="mp3")
             chunks.append(path)
         return chunks
 
-    # STEP 3: Video Generation (ComfyUI Loop)
-    def generate_clips(self, chunks, avatar_path, workflow_data):
-        print("--- Stage 3: Generating Video Clips ---")
-        clip_paths = []
-        for i, chunk in enumerate(chunks):
-            print(f"Generating Clip {i}...")
-            # Workflow mein audio aur avatar update karna
-            workflow_data['15']['inputs']['audio'] = chunk  # Example Node ID
-            workflow_data['1']['inputs']['image'] = avatar_path # Example Node ID
-            
-            # ComfyUI API Call
-            resp = requests.post(f"{self.comfy_url}/prompt", json={"prompt": workflow_data})
-            # Yahan aapko clip download karne ka logic likhna hoga (Polling)
-            clip_path = f"clips/clip_{i}.mp4"
-            clip_paths.append(clip_path)
-        return clip_paths
-
-    # STEP 4: Post-Processing (Stitching, Subtitles, Upscaling)
-    def post_process(self, clips, final_name, user_req):
-        print("--- Stage 4: Post-Processing ---")
+    def _generate_single_clip(self, workflow, audio_chunk, avatar, index):
+        # Update Workflow with current chunk and avatar
+        workflow['15']['inputs']['audio'] = audio_chunk # Replace '15' with your real Load Audio Node ID
+        workflow['1']['inputs']['image'] = avatar       # Replace '1' with your real Load Image Node ID
         
-        # 1. Stitching
-        print("Stitching clips...")
-        with open("concat_list.txt", "w") as f:
-            for c in clips: f.write(f"file '{c}'\n")
-        subprocess.run(f"ffmpeg -f concat -safe 0 -i concat_list.txt -c copy {final_name}", shell=True)
-
-        # 2. Subtitles (Optional)
-        if user_req.get('subtitles'):
-            print("Burning Subtitles...")
-            # Yahan aapka ASSSA/FFmpeg ka command chalega
-            # Example: ffmpeg -i final.mp4 -vf "subtitles=subs.ass" final_subbed.mp4
-            pass
-
-        # 3. Upscaling (Optional)
-        if user_req.get('quality') in ['4K', '8K']:
-            print(f"Upscaling to {user_req['quality']}...")
-            # Yahan SUPIR ya Real-ESRGAN chalega
-            pass
-
-        return final_name
-
-    # MAIN ENGINE
-    def run_pipeline(self, user_input):
-        # 1. Clone Voice
-        target_audio = self.clone_voice(user_input['text'], user_input['ref_voice'])
+        # Send to ComfyUI API
+        payload = {"prompt": workflow}
+        response = requests.post(f"{self.comfy_url}/prompt", json=payload)
         
-        # 2. Split Audio
-        chunks = self.segment_audio(target_audio)
-        
-        # 3. Load Workflow
-        with open(self.workflow_path, 'r') as f:
-            workflow = json.load(f)
-            
-        # 4. Generate Clips
-        clips = self.generate_clips(chunks, user_input['avatar'], workflow)
-        
-        # 5. Final Assembly
-        final_video = self.post_process(clips, "final_video.mp4", user_input['requirements'])
-        
-        return final_video
+        if response.status_code == 200:
+            # NOTE: In real production, you need a loop to poll 
+            # the websocket to wait for the file to be saved in the output folder.
+            print(f"   Clip {index} prompt sent. Waiting for generation...")
+            time.sleep(20) # Temporary placeholder for waiting
+            return f"output/clip_{index}.mp4" 
+        return None
 
-# ================= USAGE (Example) =================
+    def _stitch_clips(self, clips, output_name):
+        print("🔗 Stitching all clips together...")
+        with open("list.txt", "w") as f:
+            for clip in clips:
+                f.write(f"file '{clip}'\n")
+        subprocess.run(f"ffmpeg -f concat -safe 0 -i list.txt -c copy {output_name}", shell=True)
+
+    def _apply_final_touch(self, input_video, req, output_name):
+        print(f"✨ Applying Final Touches (Quality: {req['quality']}, Subtitles: {req['subtitles']})...")
+        
+        # Command construction
+        cmd = f"ffmpeg -i {input_video}"
+        
+        # Add Subtitles if required
+        if req['subtitles']:
+            # Logic: FFmpeg uses the .ass file generated by Whisper
+            cmd += " -vf \"subtitles=subtitles.ass\""
+        
+        # Add Scaling (Quality)
+        if req['quality'] == '4K':
+            cmd += " -vf scale=3840:2160"
+        elif req['quality'] == '1080p':
+            cmd += " -vf scale=1920:1080"
+        
+        cmd += f" -c:v libx264 -preset fast {output_name}"
+        subprocess.run(cmd, shell=True)
+
+# ================= TESTING THE AGENT =================
 if __name__ == "__main__":
-    # Yeh data aapke Frontend se aayega
+    # This is what your Frontend will send to the Handler
     user_request = {
-        "text": "Hello, welcome to my amazing AI video world!",
-        "ref_voice": "my_voice_sample.mp3",
-        "avatar": "man_avatar.png",
+        "audio_file": "my_long_voice.mp3",
+        "avatar_image": "my_avatar.png",
         "requirements": {
             "subtitles": True,
-            "subtitle_style": {"font": "Arial", "color": "yellow"},
+            "subtitle_style": "yellow",
             "quality": "4K"
         }
     }
 
-    agent = AIVideoAgent(comfyui_url="http://your-runpod-ip:8188", 
-                         voice_endpoint="https://foegigkmml5qxj.api.com")
+    # Initialize with your RunPod ComfyUI URL
+    agent = AI_Video_Automator(comfyui_url="http://YOUR_RUNPOD_IP:8188", 
+                               workflow_json="workflow_api.json")
     
-    final_mp4 = agent.run_pipeline(user_request)
-    print(f"SUCCESS! Video ready at: {final_mp4}")
+    # Start the magic
+    agent.run_pipeline(user_request)
