@@ -11,19 +11,26 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4   # v3 se v4 better hai
+        uses: actions/checkout@v4
+
+      # Docker Buildx setup (zaroori hai modern build ke liye)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3   # v2 se v3 recommended
+        uses: docker/login-action@v4   # v4 latest recommended hai
         with:
-          username: shehzarubaid
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_USERNAME }}     # ← yeh secret use karo
+          password: ${{ secrets.DOCKER_PASSWORD }}     # ← yeh bhi secret (Access Token)
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v5   # v4 se v5/v6 better (latest v7 bhi chalega)
+        uses: docker/build-push-action@v6   # v6 ya v7 latest best hai
         with:
           context: .
           push: true
           tags: |
             shehzarubaid/avafinite-ltx:latest
             shehzarubaid/avafinite-ltx:${{ github.sha }}
+          # cache for faster builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
