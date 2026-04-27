@@ -1,7 +1,8 @@
-# 1. LTX 2.3 aur GPU support ke liye CUDA base image use karein
+# 1. GPU support aur CUDA ke liye sahi base image
 FROM runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel
 
-# 2. System Level dependencies (FFmpeg lazmi hai audio splitting ke liye)
+# 2. System Level dependencies (FFmpeg yahan install ho raha hai)
+# 'apt-get update' aur 'install ffmpeg' lazmi hain
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libgl1-mesa-glx \
@@ -11,19 +12,19 @@ RUN apt-get update && apt-get install -y \
 # 3. Working directory set karein
 WORKDIR /app
 
-# 4. Pehlay requirements install karein (Fast builds ke liye)
-# Note: pydub ko audio handling ke liye add kiya gaya hai
+# 4. Python ki zaroori libraries install karein
+# pydub aur numpy audio handling ke liye zaroori hain
 RUN pip install --no-cache-dir \
     runpod \
     requests \
     pydub \
     numpy
 
-# 5. Apna poora code aur workflow JSON copy karein
+# 5. Apna saara code (agent.py, workflow_api.json) copy karein
 COPY . /app
 
-# 6. Environment variables (Taake Python logs foran nazar aayein)
+# 6. Logs ko real-time dekhne ke liye setting
 ENV PYTHONUNBUFFERED=1
 
-# 7. Apne handler (agent.py) ko start karein
+# 7. Apne handler ko start karein
 CMD ["python", "-u", "agent.py"]
