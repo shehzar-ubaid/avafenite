@@ -1,130 +1,111 @@
+import runpod
 import os
-import json
-import requests
 import subprocess
+import json
+import uuid
+import requests
 import time
-import runpod  # Required for RunPod Serverless
-from pydub import AudioSegment
 
-class AI_Video_Automator:
-    def __init__(self, comfy_url, workflow_json):
-        self.comfy_url = comfy_url
-        self.workflow_path = workflow_json
-        self.temp_dir = "temp_processing"
-        self.clips_dir = "generated_clips"
-        
-        # Create folders if they don't exist
-        for folder in [self.temp_dir, self.clips_dir]:
-            if not os.path.exists(folder):
-                os.makedirs(folder)
+# --- 1. COLD START OPTIMIZATION ---
+# Workflow JSON ko load karke memory mein rakhein
+WORKFLOW_PATH = "workflow_api.json"
+with open(WORKFLOW_PATH, 'r') as f:
+    BASE_WORKFLOW = json.load(f)
 
-    def run_pipeline(self, user_input):
-        try:
-            print("🚀 [PIPELINE STARTED]")
+print("Cold Start: Model & Workflow initialized.")
 
-            # 1. Audio Segmentation
-            audio_chunks = self._split_audio(user_input['audio_file'])
-
-            # 2. Load Workflow Template
-            if not os.path.exists(self.workflow_path):
-                raise FileNotFoundError(f"Workflow file '{self.workflow_path}' not found!")
-                
-            with open(self.workflow_path, 'r') as f:
-                workflow = json.load(f)
-
-            # 3. Loop: Generate Clips via ComfyUI
-            generated_clips = []
-            for i, chunk in enumerate(audio_chunks):
-                print(f"🎬 [STEP 3] Generating Clip {i+1}/{len(audio_chunks)}...")
-                clip_path = self._generate_single_clip(workflow, chunk, user_input['avatar_image'], i)
-                if clip_path:
-                    generated_clips.append(clip_path)
-
-            if not generated_clips:
-                raise Exception("❌ All clips failed to generate.")
-
-            # 4. Stitching
-            base_video = "base_joined_video.mp4"
-            self._stitch_clips(generated_clips, base_video)
-
-            # 5. Post-Processing
-            final_output = "final_video_ready.mp4"
-            self._apply_final_touch(base_video, user_input['requirements'], final_output)
-
-            return final_output
-
-        except Exception as e:
-            print(f"❌ [CRITICAL ERROR]: {str(e)}")
-            return None
-
-    def _split_audio(self, audio_path):
-        audio = AudioSegment.from_file(audio_path)
-        chunks = []
-        for i, start_ms in enumerate(range(0, len(audio), 10000)):
-            chunk = audio[start_ms:start_ms + 10000]
-            path = f"{self.temp_dir}/chunk_{i}.mp3"
-            chunk.export(path, format="mp3")
-            chunks.append(path)
-        return chunks
-
-    def _generate_single_clip(self, workflow, audio_chunk, avatar, index):
-        try:
-            # Node IDs mapping
-            workflow['276']['inputs']['audio'] = audio_chunk 
-            workflow['269']['inputs']['image'] = avatar       
+def update_workflow(audio_path, image_url, workflow):
+    """
+    Workflow JSON mein audio aur image nodes ko update karne ke liye.
+    Note: Aapko apne JSON ke mutabiq ID numbers (e.g., '3', '10') check karne honge.
+    """
+    new_workflow = workflow.copy()
+    
+    # Example logic: IDs aapke JSON ke mutabiq honi chahiye
+    # node_id '3' for LoadImage, '10' for LoadAudio wagera
+    for node_id in new_workflow:
+        node = new_workflow[node_id]
+        if node.get('class_type') == 'LoadAudio':
+            node['inputs']['audio'] = audio_path
+        if node.get('class_type') == 'LoadImage':
+            node['inputs']['image'] = image_url
             
-            payload = {"prompt": workflow}
-            response = requests.post(f"{self.comfy_url}/prompt", json=payload)
-            
-            if response.status_code == 200:
-                # Note: Production mein polling behtar hai, but for now:
-                time.sleep(30) 
-                clip_path = f"output/clip_{index}.mp4" 
-                return clip_path
-            return None
-        except Exception as e:
-            print(f"Error in clip {index}: {e}")
-            return None
+    return new_workflow
 
-    def _stitch_clips(self, clips, output_name):
-        list_file = "list.txt"
-        with open(list_file, "w") as f:
-            for clip in clips:
-                f.write(f"file '{clip}'\n")
-        subprocess.run(f"ffmpeg -y -f concat -safe 0 -i {list_file} -c copy {output_name}", shell=True)
+def split_audio(input_path, output_dir):
+    """FFmpeg use karke audio ko segments mein torta hai"""
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    output_pattern = os.path.join(output_dir, "chunk_%03d.wav")
+    # 30-second chunks for stability
+    subprocess.run([
+        'ffmpeg', '-i', input_path, '-f', 'segment',
+        '-segment_time', '30', '-c', 'copy', output_pattern
+    ], check=True)
+    
+    return sorted([os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith('.wav')])
 
-    def _apply_final_touch(self, input_video, req, output_name):
-        cmd = f"ffmpeg -y -i {input_video}"
-        if req.get('subtitles'):
-            cmd += " -vf \"subtitles=subtitles.ass\""
-        
-        quality_map = {'4K': '3840:2160', '1080p': '1920:1080', '720p': '1280:720'}
-        if req.get('quality') in quality_map:
-            cmd += f" -vf scale={quality_map[req['quality']]}"
-        
-        cmd += f" -c:v libx264 -preset fast {output_name}"
-        subprocess.run(cmd, shell=True)
+def stitch_videos(video_list, output_path):
+    """Sari choti clips ko join karta hai"""
+    list_path = "concat_list.txt"
+    with open(list_path, "w") as f:
+        for v in video_list:
+            f.write(f"file '{os.path.abspath(v)}'\n")
+    
+    subprocess.run([
+        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_path,
+        '-c', 'copy', output_path
+    ], check=True)
+    os.remove(list_path)
 
-# --- RUNPOD INTEGRATION ---
-
+# --- 2. HANDLER LOGIC ---
 def handler(job):
-    """
-    This function processes the input from the RunPod API
-    """
     job_input = job['input']
     
-    # ComfyUI often runs on localhost:8188 inside the container
-    comfy_url = job_input.get("comfy_url", "http://127.0.0.1:8188")
-    workflow_json = job_input.get("workflow_json", "video_ltx2_3_ia2v.json")
+    # Frontend inputs
+    user_speech = job_input.get("speech") # Raw text or audio URL
+    avatar_url = job_input.get("avatar_url")
+    
+    job_id = str(uuid.uuid4())
+    temp_dir = f"/tmp/{job_id}"
+    os.makedirs(temp_dir, exist_ok=True)
 
-    agent = AI_Video_Automator(comfy_url=comfy_url, workflow_json=workflow_json)
-    result = agent.run_pipeline(job_input)
+    try:
+        # STEP A: Voice Cloner Call (Pahlay voice banayen)
+        # Maan len ke cloner ne 'generated_speech.wav' di hai
+        full_audio = f"{temp_dir}/main_speech.wav"
+        # [Aapka Voice Cloner Logic Yahan Aye Ga]
 
-    if result:
-        return {"status": "success", "video_path": result}
-    else:
-        return {"status": "failed", "error": "Check container logs for details"}
+        # STEP B: Chunking
+        audio_chunks = split_audio(full_audio, f"{temp_dir}/chunks")
+        video_chunks = []
 
-# Start the serverless worker
-if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+        # STEP C: Loop through chunks
+        for i, chunk in enumerate(audio_chunks):
+            print(f"Generating Video Chunk {i+1}/{len(audio_chunks)}...")
+            
+            # Workflow update karein is chunk ke liye
+            current_workflow = update_workflow(chunk, avatar_url, BASE_WORKFLOW)
+            
+            # ComfyUI API call (assuming Comfy is running on port 8181)
+            # Yahan aapko actual API request karni hogi jo video return kare
+            # output_video = call_comfy_api(current_workflow)
+            # video_chunks.append(output_video)
+            
+            # Debug/Testing ke liye placeholder
+            # video_chunks.append(f"{temp_dir}/v_chunk_{i}.mp4")
+
+        # STEP D: Stitching
+        final_mp4 = f"{temp_dir}/final_result.mp4"
+        stitch_videos(video_chunks, final_mp4)
+
+        # STEP E: Result
+        # Yahan video file ko S3 ya cloud storage par upload karein
+        return {"status": "completed", "video_url": "UPLOADED_S3_LINK"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# --- 3. START SERVERLESS ---
+runpod.serverless.start({"handler": handler})

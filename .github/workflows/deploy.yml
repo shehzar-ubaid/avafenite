@@ -1,19 +1,25 @@
-name: AI Pipeline Deployment
+name: Deploy to RunPod
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ] # Jab aap 'main' branch par push karenge tab ye chalay ga
 
 jobs:
-  build-and-deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: System Check
-        run: |
-          echo "Code push detect ho gaya hai!"
-          echo "Yahan aap apne cloud pods par deployment ya Docker build ki commands add kar sakte hain."
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/avafinite-ltx:latest
