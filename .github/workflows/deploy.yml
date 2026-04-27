@@ -8,22 +8,22 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4   # v3 se v4 better hai
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3   # v2 se v3 recommended
         with:
-          # Yahan direct apna username likh dein (e.g., shehzarubaid)
-          # Taake agar secret fail ho to bhi tag sahi rahay
-          username: ${{ secrets.DOCKER_USERNAME || 'APNA_DOCKER_USERNAME_YAHAN_LIKHEIN' }}
+          username: shehzarubaid
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push
-        uses: docker/build-push-action@v4
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5   # v4 se v5/v6 better (latest v7 bhi chalega)
         with:
           context: .
           push: true
-          # Is line ko dhayan se dekhein: Yahan main ne 'OR' logic lagayi hai
-          tags: ${{ secrets.DOCKER_USERNAME || 'APNA_DOCKER_USERNAME_YAHAN_LIKHEIN' }}/avafinite-ltx:latest
+          tags: |
+            shehzarubaid/avafinite-ltx:latest
+            shehzarubaid/avafinite-ltx:${{ github.sha }}
