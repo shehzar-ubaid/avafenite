@@ -4,132 +4,129 @@ import subprocess
 import json
 import uuid
 import requests
-import time
 import sys
+import shutil
 
-# --- 1. PRE-FLIGHT CHECKS (Debugging for Serverless) ---
-def debug_environment():
-    print("--- Environment Debug Start ---")
-    # FFmpeg Check
-    try:
-        ffmpeg_v = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
-        print(f"✅ FFmpeg Found: {ffmpeg_v.stdout.splitlines()}")
-    except FileNotFoundError:
-        print("❌ FFmpeg NOT FOUND! Check your Dockerfile installation.")
-    
-    # Workflow File Check
-    if os.path.exists("workflow_api.json"):
-        print("✅ workflow_api.json Found.")
-    else:
-        print("❌ workflow_api.json MISSING in current directory.")
-        # List files for debugging
-        print(f"Current Directory Files: {os.listdir('.')}")
-    print("--- Environment Debug End ---")
+# --- 1. SMART PATH & ENVIRONMENT CHECKER ---
+def get_file_path(filename):
+    """Poori directory scan karta hai agar file root mein na milti ho"""
+    if os.path.exists(filename):
+        return os.path.abspath(filename)
+    for root, dirs, files in os.walk('.'):
+        if filename in files:
+            return os.path.join(root, filename)
+    return None
 
-debug_environment()
-
-# --- 2. COLD START OPTIMIZATION ---
-WORKFLOW_PATH = "workflow_api.json"
-
+print("--- Environment Debug Start ---")
+# FFmpeg Check (For Chunking & Stitching)
 try:
+    ffmpeg_check = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+    print(f"✅ FFmpeg Found: {ffmpeg_check.stdout.splitlines()}")
+except Exception:
+    print("❌ FFmpeg NOT FOUND! Please check Dockerfile installation.")
+
+# Workflow JSON Check
+WORKFLOW_PATH = get_file_path("workflow_api.json")
+if WORKFLOW_PATH:
+    print(f"✅ workflow_api.json Found at: {WORKFLOW_PATH}")
     with open(WORKFLOW_PATH, 'r') as f:
         BASE_WORKFLOW = json.load(f)
-    print("Cold Start: Workflow JSON loaded successfully.")
-except Exception as e:
-    print(f"CRITICAL ERROR: Could not load workflow JSON: {str(e)}")
-    # Worker ko crash hone se bachaane ke liye empty dict ya exit
+else:
+    print("❌ workflow_api.json MISSING! Check your file structure.")
     BASE_WORKFLOW = {}
+print("--- Environment Debug End ---")
 
-def update_workflow(audio_path, image_url, workflow):
-    """Workflow nodes update logic"""
-    new_workflow = workflow.copy()
-    for node_id in new_workflow:
-        node = new_workflow[node_id]
-        if node.get('class_type') == 'LoadAudio':
-            node['inputs']['audio'] = audio_path
-        if node.get('class_type') == 'LoadImage':
-            node['inputs']['image'] = image_url
-    return new_workflow
+# --- 2. UTILITY FUNCTIONS ---
 
 def split_audio(input_path, output_dir):
-    """Audio splitting with FFmpeg"""
+    """Audio ko 30s chunks mein torta hai taake timeout na ho"""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
     output_pattern = os.path.join(output_dir, "chunk_%03d.wav")
-    print(f"Splitting audio: {input_path} -> {output_dir}")
+    print(f"Splitting audio into chunks: {input_path}")
     
     subprocess.run([
         'ffmpeg', '-i', input_path, '-f', 'segment',
         '-segment_time', '30', '-c', 'copy', output_pattern
     ], check=True)
     
-    chunks = sorted([os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith('.wav')])
-    print(f"Generated {len(chunks)} audio chunks.")
-    return chunks
+    return sorted([os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith('.wav')])
 
 def stitch_videos(video_list, output_path):
-    """FFmpeg video stitching"""
+    """Sab video chunks ko join karke final MP4 banata hai"""
     if not video_list:
-        raise Exception("No video chunks to stitch!")
+        return None
         
     list_path = "concat_list.txt"
     with open(list_path, "w") as f:
         for v in video_list:
             f.write(f"file '{os.path.abspath(v)}'\n")
     
-    print(f"Stitching {len(video_list)} videos into {output_path}")
+    print(f"Stitching {len(video_list)} videos...")
     subprocess.run([
         'ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_path,
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', output_path
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', output_path
     ], check=True)
     
     if os.path.exists(list_path):
         os.remove(list_path)
+    return output_path
 
-# --- 3. HANDLER LOGIC ---
+# --- 3. CORE HANDLER ---
+
 def handler(job):
     job_input = job['input']
     
-    speech_url = job_input.get("speech_url") # URL of pre-generated audio
+    # Inputs from Frontend
+    speech_url = job_input.get("speech_url")  # Voice cloner output link
     avatar_url = job_input.get("avatar_url")
     
+    if not speech_url or not avatar_url:
+        return {"error": "Missing speech_url or avatar_url"}
+
     job_id = str(uuid.uuid4())
     temp_dir = f"/tmp/{job_id}"
     os.makedirs(temp_dir, exist_ok=True)
 
     try:
-        # STEP A: Download/Get Full Audio
+        # Step 1: Download Full Audio
+        print("Downloading audio...")
         full_audio_path = os.path.join(temp_dir, "main_speech.wav")
-        # Example: Download from URL if provided
-        if speech_url:
-            r = requests.get(speech_url)
-            with open(full_audio_path, 'wb') as f:
-                f.write(r.content)
-        else:
-            return {"error": "No speech_url provided"}
+        response = requests.get(speech_url, timeout=30)
+        with open(full_audio_path, 'wb') as f:
+            f.write(response.content)
 
-        # STEP B: Chunking
+        # Step 2: Split into 30s Chunks
         audio_chunks = split_audio(full_audio_path, os.path.join(temp_dir, "chunks"))
         video_chunks = []
 
-        # STEP C: Pipeline Loop (Simulated for your logic)
+        # Step 3: Process Chunks (Loop)
+        # Note: Yahan aapka ComfyUI / LTX2.3 call logic aye ga
         for i, chunk in enumerate(audio_chunks):
             print(f"Processing Chunk {i+1}/{len(audio_chunks)}...")
-            # actual_video = call_your_comfy_logic(chunk, avatar_url)
-            # video_chunks.append(actual_video)
+            # Placeholder for your LTX generation:
+            # video_output = run_ltx_workflow(chunk, avatar_url, BASE_WORKFLOW)
+            # video_chunks.append(video_output)
 
-        # STEP D: Stitching (Sirf tab chalega jab video_chunks list khali na ho)
+        # Step 4: Stitching
+        # (Sirf tab chalega jab chunks generate honge)
         if video_chunks:
             final_mp4 = os.path.join(temp_dir, "final_result.mp4")
             stitch_videos(video_chunks, final_mp4)
-            return {"status": "completed", "video_url": "S3_UPLOAD_LINK"}
-        else:
-            return {"status": "debug", "message": f"Processed {len(audio_chunks)} chunks, but no videos generated."}
+            # Yahan aap video ko S3 par upload karke link return karenge
+            return {"status": "success", "video_url": "YOUR_S3_LINK"}
+        
+        return {"status": "completed_debug", "chunks_processed": len(audio_chunks)}
 
     except Exception as e:
-        print(f"Handler Error: {str(e)}")
+        print(f"Error occurred: {str(e)}")
         return {"status": "error", "message": str(e)}
+    
+    finally:
+        # Cleanup temporary files
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
-# --- 4. START RUNPOD ---
+# --- 4. START SERVERLESS ---
 runpod.serverless.start({"handler": handler})
