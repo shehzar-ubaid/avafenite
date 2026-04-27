@@ -3,7 +3,7 @@ name: Deploy to RunPod
 on:
   push:
     branches:
-      - main # Sirf main branch par push karne se trigger hoga
+      - main
 
 jobs:
   build-and-push:
@@ -12,22 +12,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push Docker Image
+      - name: Build and Push
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          # Tags mein 'secrets' ka syntax verify karein
           tags: ${{ secrets.DOCKER_USERNAME }}/avafinite-ltx:latest
-          # Build cache use karne ke liye (fast builds)
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
