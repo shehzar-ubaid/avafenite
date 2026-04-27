@@ -1,25 +1,14 @@
-name: Deploy to RunPod
-
-on:
-  push:
-    branches: [ main ] # Jab aap 'main' branch par push karenge tab ye chalay ga
-
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Login to Docker Hub
+- name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          # Yahan wo names likhein jo aapne GitHub Secrets mein save kiye hain
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/avafinite-ltx:latest
+          # Username dynamic rakhein taake error na aaye
+          tags: ${{ secrets.DOCKER_USERNAME }}/avafinite-ltx:latest
