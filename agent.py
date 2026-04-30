@@ -8,47 +8,50 @@ import sys
 import shutil
 
 # --- 1. SMART PATH & ENVIRONMENT CHECKER ---
-def get_file_path(filename):
-    """Scan current directory and subdirectories for the file"""
-    if os.path.exists(filename):
-        return os.path.abspath(filename)
-    for root, dirs, files in os.walk('.'):
-        if filename in files:
-            return os.path.join(root, filename)
+def get_file_path(filenames):
+    """Multiple filenames check karta hai taake crash na ho"""
+    for filename in filenames:
+        if os.path.exists(filename):
+            return os.path.abspath(filename)
+        for root, dirs, files in os.walk('.'):
+            if filename in files:
+                return os.path.join(root, filename)
     return None
 
 print("--- Environment Debug Start ---")
-# FFmpeg Check for audio splitting/stitching[cite: 16]
+# FFmpeg Check for audio splitting/stitching
 try:
     ffmpeg_check = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
-    print(f"✅ FFmpeg Found: {ffmpeg_check.stdout.splitlines()[0]}")
+    # Logging ko simple rakha hai taake splitlines error na aaye
+    print(f"✅ FFmpeg Found") 
 except Exception:
     print("❌ FFmpeg NOT FOUND! Check your Dockerfile installation.")
 
-# Workflow JSON Check (Flexible Path)[cite: 16]
-# Aapke JSON ka naam yahan confirm karein
-WORKFLOW_NAME = "workflow_api.json" 
-WORKFLOW_PATH = get_file_path(WORKFLOW_NAME)
+# Workflow JSON Check (Flexible Path for workflow_api_2.json)[cite: 9, 18]
+POSSIBLE_WORKFLOWS = ["workflow_api_2.json", "workflow_api.json", "video_ltx2_3_ia2v.json"]
+WORKFLOW_PATH = get_file_path(POSSIBLE_WORKFLOWS)
 
 if WORKFLOW_PATH:
-    print(f"✅ {WORKFLOW_NAME} Found at: {WORKFLOW_PATH}")
+    print(f"✅ Workflow Found at: {WORKFLOW_PATH}")
     with open(WORKFLOW_PATH, 'r') as f:
         BASE_WORKFLOW = json.load(f)
 else:
-    print(f"❌ {WORKFLOW_NAME} MISSING! Please check your file structure.")
+    print("❌ CRITICAL: No Workflow JSON found! Check your file structure.")
     BASE_WORKFLOW = {}
+    # Agar workflow lazmi hai to yahan sys.exit(1) kar sakte hain
 print("--- Environment Debug End ---")
 
 # --- 2. UTILITY FUNCTIONS ---
 
 def split_audio(input_path, output_dir):
-    """Splits long audio into 30s chunks for stable processing[cite: 16]"""
+    """Splits long audio into 30s chunks for stable processing[cite: 18]"""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
     
     output_pattern = os.path.join(output_dir, "chunk_%03d.wav")
     print(f"Splitting audio: {input_path}")
     
+    # -y flag added to overwrite existing files
     subprocess.run([
         'ffmpeg', '-i', input_path, '-f', 'segment',
         '-segment_time', '30', '-c', 'copy', output_pattern, '-y'
@@ -59,7 +62,7 @@ def split_audio(input_path, output_dir):
     return chunks
 
 def stitch_videos(video_list, output_path):
-    """Joins all processed video chunks into one final MP4[cite: 16]"""
+    """Joins all processed video chunks into one final MP4[cite: 18]"""
     if not video_list:
         return None
         
@@ -94,34 +97,32 @@ def handler(job):
     os.makedirs(temp_dir, exist_ok=True)
 
     try:
-        # Step 1: Download Full Audio[cite: 16]
+        # Step 1: Download Full Audio[cite: 18]
         full_audio_path = os.path.join(temp_dir, "main_speech.wav")
         print(f"Downloading audio from: {speech_url}")
         response = requests.get(speech_url, timeout=60)
         with open(full_audio_path, 'wb') as f:
             f.write(response.content)
 
-        # Step 2: Chunking[cite: 16]
+        # Step 2: Split into 30s Chunks[cite: 18]
         audio_chunks = split_audio(full_audio_path, os.path.join(temp_dir, "chunks"))
         video_chunks = []
 
-        # Step 3: Loop through chunks for LTX 2.3 processing[cite: 16]
+        # Step 3: Loop through chunks for LTX 2.3 processing[cite: 18]
         for i, chunk in enumerate(audio_chunks):
             print(f"🚀 Processing Chunk {i+1}/{len(audio_chunks)}...")
-            # Note: Yahan aapka ComfyUI request ka code aayega
-            # dummy_video = process_ltx_chunk(chunk, avatar_url, BASE_WORKFLOW)
-            # video_chunks.append(dummy_video)
+            # Yahan aapka LTX generation logic aayega
 
-        # Step 4: Final Stitching[cite: 16]
+        # Step 4: Final Stitching[cite: 18]
         if video_chunks:
             final_mp4 = os.path.join(temp_dir, "final_result.mp4")
             stitch_videos(video_chunks, final_mp4)
-            return {"status": "success", "video_url": "UPLOAD_TO_STORAGE_LINK"}
+            return {"status": "success", "video_url": "UPLOAD_LINK_HERE"}
         
         return {
             "status": "debug_complete", 
             "message": f"FFmpeg checked and {len(audio_chunks)} chunks identified.",
-            "workflow_status": "Loaded" if BASE_WORKFLOW else "Missing"
+            "workflow_file_used": os.path.basename(WORKFLOW_PATH) if WORKFLOW_PATH else "None"
         }
 
     except Exception as e:
@@ -129,6 +130,7 @@ def handler(job):
         return {"status": "error", "message": str(e)}
     
     finally:
+        # Cleanup taake disk space full na ho
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
 
