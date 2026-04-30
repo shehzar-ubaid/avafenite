@@ -1,27 +1,29 @@
-# Base image with CUDA support
+# CUDA base image for LTX 2.3 and GPU support[cite: 17]
 FROM runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel
 
-# Fix for FFmpeg installation
+# Install FFmpeg and system GL libraries[cite: 17]
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libgl1-mesa-glx \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app          
+# Working directory set karein[cite: 17]
+WORKDIR /app
 
-# Install Python dependencies
+# Python packages install karein[cite: 17]
 RUN pip install --no-cache-dir \
     runpod \
     requests \
     pydub \
     numpy
 
-# Copy all files from your repo to the container
+# Sari files copy karein[cite: 17]
+# Note: Ensure workflow_api.json is in the same folder as agent.py
 COPY . /app
 
-# Ensure logs are visible immediately
+# Immediate log visibility[cite: 17]
 ENV PYTHONUNBUFFERED=1
 
-# Execute agent.py
+# Execute the handler[cite: 17]
 CMD ["python", "-u", "agent.py"]
