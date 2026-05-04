@@ -32,7 +32,7 @@ def stitch_videos(video_list, output_path):
         for v in video_list:
             f.write(f"file '{os.path.abspath(v)}'\n")
             
-    # Linewise stitching logic without quality loss[cite: 10]
+    # Linewise stitching logic without quality loss
     subprocess.run([
         'ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_path, 
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', output_path
@@ -44,7 +44,7 @@ def stitch_videos(video_list, output_path):
 # --- 2. CORE HANDLER ---
 
 def handler(job):
-    """RunPod Job Handler with robust input detection[cite: 10, 12]"""
+    """RunPod Job Handler with robust input detection"""
     
     # Nesting handling: Pehle 'input' nikalen
     job_input = job.get('input', {})
@@ -55,16 +55,15 @@ def handler(job):
     
     speech_url = None
     if isinstance(raw_speech, dict):
-        # Chatterbox output handling (Base64 or URL)[cite: 12]
         speech_url = raw_speech.get("audio_base64") or raw_speech.get("audio_url")
     else:
         speech_url = raw_speech
 
-    # Debugging logs for RunPod Console[cite: 10, 11]
+    # Debugging logs
     print(f"DEBUG: Processed speech_url (len): {len(str(speech_url)) if speech_url else 0}")
     print(f"DEBUG: Processed avatar_url: {avatar_url}")
 
-    # STRICT INPUT VALIDATION: Preventing 'None' errors
+    # STRICT INPUT VALIDATION
     if not speech_url or not avatar_url:
         missing = []
         if not speech_url: missing.append("speech_url")
@@ -82,7 +81,7 @@ def handler(job):
     try:
         full_audio_path = os.path.join(temp_dir, "main_speech.wav")
 
-        # Step 1: Audio Handling (URL vs Base64)[cite: 10, 12]
+        # Step 1: Audio Handling (URL vs Base64)
         if isinstance(speech_url, str) and speech_url.startswith('http'):
             response = requests.get(speech_url, timeout=120)
             response.raise_for_status()
@@ -95,22 +94,38 @@ def handler(job):
             with open(full_audio_path, 'wb') as f:
                 f.write(base64.b64decode(audio_data))
 
-        # Step 2: 8s Splitting[cite: 10]
+        # Step 2: 8s Splitting
         audio_chunks = split_audio_8s(full_audio_path, os.path.join(temp_dir, "chunks"))
         print(f"✅ Identified {len(audio_chunks)} segments of 8 seconds each.")
 
-        # Step 3: Loop through 8s chunks for LTX processing[cite: 10]
-        # (Yahan aapka processing logic aayega)
+        # Step 3: Loop through 8s chunks for LTX processing
         processed_segments = []
         for i, chunk in enumerate(audio_chunks):
             print(f"🚀 Processing Segment {i+1}/{len(audio_chunks)}...")
+            # Actual processing (e.g., ComfyUI) call yahan hoti hai
+            # processed_segments.append(result_path)
             pass
 
-        return {
-            "status": "success", 
-            "chunks_processed": len(audio_chunks),
-            "message": "Processing complete"
-        }
+        # Step 4: Final Stitching & Return Video
+        final_video_path = os.path.join(temp_dir, "final_output.mp4")
+        
+        # NOTE: processed_segments must contain the paths to generated video chunks
+        if processed_segments:
+            stitch_videos(processed_segments, final_video_path)
+            with open(final_video_path, "rb") as video_file:
+                encoded_string = base64.b64encode(video_file.read()).decode('utf-8')
+            
+            return {
+                "status": "success", 
+                "video_base64": encoded_string,
+                "message": "Processing complete"
+            }
+        else:
+            return {
+                "status": "success", 
+                "chunks_processed": len(audio_chunks),
+                "message": "Audio processed but no segments generated in dummy loop"
+            }
 
     except Exception as e:
         return {"status": "error", "message": f"Processing failed: {str(e)}"}
