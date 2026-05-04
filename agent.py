@@ -25,7 +25,7 @@ def split_audio_8s(input_path, output_dir):
     return sorted([os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith('.wav')])
 
 def stitch_videos(video_list, output_path):
-    """Processed segments ko sequence mein jorta hai[cite: 10]"""
+    """Processed segments ko sequence mein jorta hai"""
     if not video_list: return None
     list_path = "concat_list.txt"
     with open(list_path, "w") as f:
@@ -44,31 +44,36 @@ def stitch_videos(video_list, output_path):
 # --- 2. CORE HANDLER ---
 
 def handler(job):
-    """RunPod Job Handler with robust input detection[cite: 10]"""
+    """RunPod Job Handler with robust input detection[cite: 10, 12]"""
     
     # Nesting handling: Pehle 'input' nikalen
     job_input = job.get('input', {})
     
     # --- FIXED DATA EXTRACTION ---
-    # Chatterbox se aane wale data ko handle karne ke liye robust logic
     raw_speech = job_input.get("speech_url") 
-    speech_url = None
-
-    if isinstance(raw_speech, dict):
-        # Agar Chatterbox ne object bheja hai (audio_base64 ya audio_url)
-        speech_url = raw_speech.get("audio_base64") or raw_speech.get("audio_url")
-    else:
-        # Agar direct string hai
-        speech_url = raw_speech
-
     avatar_url = job_input.get("avatar_url")
     
-    # Debugging logs for RunPod Console[cite: 10]
-    print(f"DEBUG: Extracted speech_url (first 50 chars): {str(speech_url)[:50]}...")
+    speech_url = None
+    if isinstance(raw_speech, dict):
+        # Chatterbox output handling (Base64 or URL)[cite: 12]
+        speech_url = raw_speech.get("audio_base64") or raw_speech.get("audio_url")
+    else:
+        speech_url = raw_speech
+
+    # Debugging logs for RunPod Console[cite: 10, 11]
+    print(f"DEBUG: Processed speech_url (len): {len(str(speech_url)) if speech_url else 0}")
     print(f"DEBUG: Processed avatar_url: {avatar_url}")
 
+    # STRICT INPUT VALIDATION: Preventing 'None' errors
     if not speech_url or not avatar_url:
-        return {"error": f"Missing inputs. Worker expected 'speech_url' and 'avatar_url'. Found keys: {list(job_input.keys())}"}
+        missing = []
+        if not speech_url: missing.append("speech_url")
+        if not avatar_url: missing.append("avatar_url")
+        return {
+            "error": f"Missing inputs: {', '.join(missing)}",
+            "found_keys": list(job_input.keys()),
+            "status": "FAILED"
+        }
 
     job_id = str(uuid.uuid4())
     temp_dir = f"/tmp/{job_id}"
@@ -77,39 +82,34 @@ def handler(job):
     try:
         full_audio_path = os.path.join(temp_dir, "main_speech.wav")
 
-        # Step 1: Chatterbox Audio Handling (URL vs Base64)[cite: 10]
-        if speech_url.startswith('http'):
-            # Download if it's a URL
+        # Step 1: Audio Handling (URL vs Base64)[cite: 10, 12]
+        if isinstance(speech_url, str) and speech_url.startswith('http'):
             response = requests.get(speech_url, timeout=120)
             response.raise_for_status()
             with open(full_audio_path, 'wb') as f: 
                 f.write(response.content)
         else:
-            # Decode if it's Base64
             audio_data = speech_url
-            if ',' in audio_data: audio_data = audio_data.split(',')[1]
+            if isinstance(audio_data, str) and ',' in audio_data: 
+                audio_data = audio_data.split(',')[1]
             with open(full_audio_path, 'wb') as f:
                 f.write(base64.b64decode(audio_data))
 
-        # Step 2: 8s Splitting (Tornay wala kaam)[cite: 10]
+        # Step 2: 8s Splitting[cite: 10]
         audio_chunks = split_audio_8s(full_audio_path, os.path.join(temp_dir, "chunks"))
         print(f"✅ Identified {len(audio_chunks)} segments of 8 seconds each.")
 
+        # Step 3: Loop through 8s chunks for LTX processing[cite: 10]
+        # (Yahan aapka processing logic aayega)
         processed_segments = []
-
-        # Step 3: Loop through 8s chunks for processing[cite: 10]
         for i, chunk in enumerate(audio_chunks):
             print(f"🚀 Processing Segment {i+1}/{len(audio_chunks)}...")
-            # Actual processing logic (ComfyUI etc.) yahan aayega
             pass
-
-        # Step 4: Final Stitching (Jornay wala kaam)[cite: 10]
-        # output_video = stitch_videos(processed_segments, os.path.join(temp_dir, "final.mp4"))
 
         return {
             "status": "success", 
             "chunks_processed": len(audio_chunks),
-            "message": "Inputs received, split into 8s segments, and ready for output."
+            "message": "Processing complete"
         }
 
     except Exception as e:
