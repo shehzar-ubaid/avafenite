@@ -121,10 +121,10 @@ def handler(job):
                 "message": "Processing complete"
             }
         else:
+            # UPDATED: Return error instead of success if segments are missing
             return {
-                "status": "success", 
-                "chunks_processed": len(audio_chunks),
-                "message": "Audio processed but no segments generated in dummy loop"
+                "status": "FAILED", 
+                "message": "Backend Error: Step 3 mein koi video segment generate nahi hua. Model logic check karein."
             }
 
     except Exception as e:
