@@ -40,6 +40,7 @@ def handler(job):
     raw_speech = job_input.get("speech_url") 
     avatar_url = job_input.get("avatar_url")
     
+    # Audio extraction logic
     speech_url = None
     if isinstance(raw_speech, dict):
         speech_url = raw_speech.get("audio_base64") or raw_speech.get("audio_url")
@@ -64,31 +65,36 @@ def handler(job):
             audio_data = speech_url.split(',')[1] if ',' in speech_url else speech_url
             with open(full_audio_path, 'wb') as f: f.write(base64.b64decode(audio_data))
 
-        # Step 2: Split Audio
+        # Step 2: Split Audio into 8s chunks
         audio_chunks = split_audio_8s(full_audio_path, os.path.join(temp_dir, "chunks"))
         processed_segments = []
 
-        # --- STEP 3: ACTUAL LTX/COMFYUI PROCESSING ---
+        # --- STEP 3: ACTUAL LTX-VIDEO INFERENCE ---
         for i, chunk in enumerate(audio_chunks):
             print(f"🚀 Processing Segment {i+1}/{len(audio_chunks)}...")
             
-            # Segment ke liye output path
             seg_output = os.path.join(temp_dir, f"seg_{i}.mp4")
 
-            # YAHAN APNA ASLI COMMAND LIKHEIN
-            # Example (Agar aap koi script chalate hain):
-            # subprocess.run(["python", "inference.py", "--audio", chunk, "--image", avatar_url, "--output", seg_output], check=True)
-            
-            # CHECK: Agar aapka worker sirf dummy hai, toh hum temporary file banate hain testing ke liye
-            # LAKIN aapko yahan apna model output append karna hoga:
-            if os.path.exists(seg_output):
-                processed_segments.append(seg_output)
+            # 🔥 YE HAI ASLI COMMAND JO VIDEO BANAYEGI
+            # Note: '--input_image' aur '--input_audio' aapke script ke argument names ke mutabiq hone chahiye
+            try:
+                subprocess.run([
+                    "python", "inference.py", 
+                    "--input_image", avatar_url, 
+                    "--input_audio", chunk, 
+                    "--output_video", seg_output
+                ], check=True)
+                
+                if os.path.exists(seg_output):
+                    processed_segments.append(seg_output)
+            except Exception as inner_e:
+                print(f"❌ Error in segment {i}: {str(inner_e)}")
 
-        # --- STEP 4: STITCHING ---
+        # --- STEP 4: FINAL STITCHING ---
         if not processed_segments:
             return {
                 "status": "FAILED", 
-                "message": "Step 3 logic check karein: processed_segments list khali hai. Model ne koi file generate nahi ki."
+                "message": "Inference failed: Model ne koi video file generate nahi ki. 'inference.py' ke arguments check karein."
             }
 
         final_video_path = os.path.join(temp_dir, "final_output.mp4")
