@@ -1,0 +1,5 @@
+runpod
+pydub
+faster-whisper
+requests
+python-dotenv
